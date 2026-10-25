@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>60 Day Protocol</title>
+<script>
+(function(){
+  function roundRect(c,x,y,w,h,r){
+    r=Math.max(0,Math.min(r,w/2,h/2));
+    c.beginPath();
+    c.moveTo(x+r,y); c.arcTo(x+w,y,x+w,y+h,r); c.arcTo(x+w,y+h,x,y+h,r);
+    c.arcTo(x,y+h,x,y,r); c.arcTo(x,y,x+w,y,r); c.closePath();
+  }
+  function pick(c,i){ return Array.isArray(c)? c[i % c.length] : c; }
+
+  class Chart{
+    constructor(el,cfg){
+      this.canvas=el; this.ctx=el.getContext('2d');
+      this.type=cfg.type; this.data=cfg.data; this.options=cfg.options||{};
+      this.chartArea=null;
+      window.addEventListener('resize',()=>this.resize());
+      this.resize();
+    }
+    resize(){
+      const box=this.canvas.parentElement.getBoundingClientRect();
+      const dpr=window.devicePixelRatio||1;
+      this.w=Math.max(10,box.width); this.h=Math.max(10,box.height);
+      this.canvas.width=this.w*dpr; this.canvas.height=this.h*dpr;
+      this.canvas.style.width=this.w+'px'; this.canvas.style.height=this.h+'px';
+      this.ctx.setTransform(dpr,0,0,dpr,0,0);
+      this.draw();
+    }
+    update(){ this.draw(); }
+    val(c){ return typeof c==='function' ? c({chart:this}) : c; }
+    draw(){
+      const c=this.ctx, w=this.w, h=this.h;
+      if(!w) return;
+      c.clearRect(0,0,w,h);
+      if(this.type==='radar') return this.drawRadar();
+      const horiz=this.options.indexAxis==='y';
+      const ds=this.data.datasets, labels=this.data.labels||[], n=labels.length;
+      const pad={l:horiz?90:34, r:10, t:12, b:horiz?14:22};
+      const W=w-pad.l-pad.r, H=h-pad.t-pad.b;
+      this.chartArea={left:pad.l,top:pad.t,right:w-pad.r,bottom:h-pad.b,width:W,height:H};
+      c.font='10px sans-serif';
+      c.fillStyle='#8593b0';
+      if(horiz) return this.drawHoriz(ds,labels,n,pad,W,H);
+
+      const vals=[]; ds.forEach(d=>d.data.forEach(v=>{ if(v!=null) vals.push(v); }));
+      const sc=this.options.scales&&this.options.scales.y||{};
+      const ymin=sc.min!=null?sc.min:0;
+      const ymax=sc.max!=null?sc.max:Math.max(1,...vals)*1.1;
+      const X=i=>pad.l+(i+0.5)*(W/n);
+      const Y=v=>pad.t+H-(v-ymin)/(ymax-ymin)*H;
+
+      c.strokeStyle='rgba(120,140,180,.12)'; c.lineWidth=1;
+      c.textAlign='right'; c.textBaseline='middle';
+      for(let k=0;k<=4;k++){
+        const v=ymin+(ymax-ymin)*k/4, y=Y(v);
+        c.beginPath(); c.moveTo(pad.l,y); c.lineTo(w-pad.r,y); c.stroke();
+        c.fillText(Math.round(v)+(ymax===100?'%':''),pad.l-6,y);
+      }
+      c.textAlign='center'; c.textBaseline='top';
+      const step=Math.ceil(n/10);
+      labels.forEach((l,i)=>{ if(i%step===0) c.fillText(l,X(i),pad.t+H+6); });
+
+      ds.forEach(d=>{
+        if((d.type||this.type)!=='bar') return;
+        const bw=Math.max(2,Math.min(26,W/n*0.7));
+        d.data.forEach((v,i)=>{
+          if(v==null) return;
+          const y=Y(v);
+          c.fillStyle=this.val(pick(d.backgroundColor,i));
+          roundRect(c,X(i)-bw/2,y,bw,Math.max(pad.t+H-y,0),4);
+          c.fill();
+        });
+      });
+
+      ds.forEach(d=>{
+        if((d.type||this.type)!=='line') return;
+        c.save();
+        c.strokeStyle=this.val(d.borderColor)||'#fff';
+        c.lineWidth=d.borderWidth||2;
+        c.setLineDash(d.borderDash||[]);
+        c.beginPath();
+        let started=false, first=0, last=0;
+        d.data.forEach((v,i)=>{
+          if(v==null) return;
+          const x=X(i), y=Y(v);
+          if(!started){ c.moveTo(x,y); started=true; first=x; } else c.lineTo(x,y);
+          last=x;
+        });
+        c.stroke();
+        if(d.fill && started){
+          c.setLineDash([]);
+          c.lineTo(last,pad.t+H); c.lineTo(first,pad.t+H); c.closePath();
+          c.fillStyle=this.val(d.backgroundColor);
+          c.fill();
+        }
+        c.restore();
+      });
+    }
+    drawHoriz(ds,labels,n,pad,W,H){
+      const c=this.ctx;
+      const totals=labels.map((_,i)=>ds.reduce((s,d)=>s+(d.data[i]||0),0));
+      const xmax=Math.max(1,...totals)*1.1;
+      const rowH=H/n, bh=Math.min(22,rowH*0.6);
+      const X=v=>pad.l+v/xmax*W;
+      c.textAlign='right'; c.textBaseline='middle';
+      labels.forEach((l,i)=>c.fillText(l,pad.l-8,pad.t+rowH*(i+0.5)));
+      labels.forEach((l,i)=>{
+        let acc=0;
+        ds.forEach(d=>{
+          const v=d.data[i]||0;
+          if(v>0){
+            const x0=X(acc), x1=X(acc+v), y=pad.t+rowH*i+(rowH-bh)/2;
+            c.fillStyle=this.val(pick(d.backgroundColor,i));
+            roundRect(c,x0,y,Math.max(x1-x0-2,2),bh,4); c.fill();
+          }
+          acc+=v;
+        });
+      });
+    }
+    drawRadar(){
+      const c=this.ctx, w=this.w, h=this.h;
+      const labels=this.data.labels, n=labels.length;
+      const cx=w/2, cy=h/2, R=Math.max(20,Math.min(w,h)/2-34);
+      const rmax=(this.options.scales&&this.options.scales.r&&this.options.scales.r.max)||100;
+      const P=(i,v)=>{ const a=-Math.PI/2+i*2*Math.PI/n, r=v/rmax*R; return [cx+r*Math.cos(a), cy+r*Math.sin(a)]; };
+      c.strokeStyle='rgba(120,140,180,.14)'; c.lineWidth=1;
+      for(let k=1;k<=4;k++){
+        c.beginPath();
+        for(let i=0;i<n;i++){ const [x,y]=P(i,rmax*k/4); i?c.lineTo(x,y):c.moveTo(x,y); }
+        c.closePath(); c.stroke();
+      }
+      c.font='10px sans-serif'; c.textBaseline='middle';
+      for(let i=0;i<n;i++){
+        const [x,y]=P(i,rmax); c.beginPath(); c.moveTo(cx,cy); c.lineTo(x,y); c.stroke();
+        const [lx,ly]=P(i,rmax*1.25);
+        c.fillStyle='#8593b0';
+        c.textAlign=Math.abs(lx-cx)<4?'center':(lx>cx?'left':'right');
+        c.fillText(labels[i],lx,ly);
+      }
+      this.data.datasets.forEach(d=>{
+        c.beginPath();
+        d.data.forEach((v,i)=>{ const [x,y]=P(i,v||0); i?c.lineTo(x,y):c.moveTo(x,y); });
+        c.closePath();
+        c.fillStyle=this.val(d.backgroundColor); c.fill();
+        c.strokeStyle=this.val(d.borderColor); c.lineWidth=d.borderWidth||2; c.stroke();
+        c.fillStyle=this.val(d.pointBackgroundColor)||'#fff';
+        d.data.forEach((v,i)=>{ const [x,y]=P(i,v||0); c.beginPath(); c.arc(x,y,3,0,Math.PI*2); c.fill(); });
+      });
+    }
+  }
+  window.Chart=Chart;
+})();
+
+</script>
+<style>
+:root{--bg:#05070d;--panel:#0b1120;--line:#18223a;--text:#e6edf7;--muted:#6f7f9e;--cyan:#22d3ee;--violet:#a78bfa;--amber:#fbbf24;--green:#34d399;--red:#f87171;--pink:#f472b6}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:radial-gradient(900px 500px at 0% -10%,#14204a 0%,transparent 60%),radial-gradient(700px 500px at 100% 0%,#3a1450 0%,transparent 55%),var(--bg);background-attachment:fixed;color:var(--text);font-family:"Segoe UI",Roboto,system-ui,sans-serif;overflow:hidden}
+.app{height:100vh;display:flex;flex-direction:column;padding:14px 18px 0}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding-bottom:10px}
+h1{font-size:20px;letter-spacing:.16em;margin:0;text-transform:uppercase;background:linear-gradient(90deg,var(--cyan),var(--violet),var(--pink));-webkit-background-clip:text;background-clip:text;color:transparent}
+.sub{color:var(--muted);font-size:12px;margin-top:3px}
+.deck{flex:1;min-height:0;overflow:hidden;position:relative}
+.slides{display:flex;height:100%;width:100%;transition:transform .55s cubic-bezier(.6,.05,.2,1)}
+.slide{flex:0 0 100%;height:100%;display:grid;grid-template-columns:330px minmax(0,1fr) 340px;gap:14px;padding:4px 2px 14px}
+.col{min-height:0;overflow:auto;display:flex;flex-direction:column;gap:14px;padding-right:4px}
+.col::-webkit-scrollbar{width:6px}.col::-webkit-scrollbar-thumb{background:#1c2740;border-radius:9px}
+.card{background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,0)),var(--panel);border:1px solid var(--line);border-radius:18px;padding:16px;box-shadow:0 12px 36px rgba(0,0,0,.4);flex-shrink:0}
+.card h2{font-size:11px;letter-spacing:.2em;text-transform:uppercase;margin:0 0 12px;color:var(--cyan)}
+.card.v h2{color:var(--violet)}.card.a h2{color:var(--amber)}.card.g h2{color:var(--green)}.card.p h2{color:var(--pink)}
+.big{font-size:34px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1}
+.stat{display:flex;align-items:baseline;gap:8px;margin-bottom:8px}
+.muted{color:var(--muted);font-size:12px}
+.bar{height:8px;background:#0f1729;border-radius:99px;overflow:hidden;margin:10px 0 6px;border:1px solid var(--line)}
+.bar>i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--violet),var(--pink));box-shadow:0 0 14px rgba(34,211,238,.45);transition:width .6s}
+.row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px dashed #1a2440}
+.row:last-child{border-bottom:0}
+.row label{flex:1;font-size:14px;cursor:pointer}
+input[type=checkbox]{appearance:none;width:18px;height:18px;border:1.5px solid #2b3a5e;border-radius:6px;display:grid;place-items:center;cursor:pointer;background:#0a1020;margin:0}
+input[type=checkbox]:checked{background:linear-gradient(135deg,var(--cyan),var(--violet));border-color:transparent;box-shadow:0 0 10px rgba(167,139,250,.5)}
+input[type=checkbox]:checked::after{content:"✓";color:#05080f;font-size:12px;font-weight:800}
+input[type=number]{width:74px;background:#0a1020;border:1px solid #2b3a5e;color:var(--text);border-radius:8px;padding:6px 8px;font-size:14px}
+input[type=number]:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 10px rgba(34,211,238,.3)}
+.sec-t{font-size:10px;letter-spacing:.2em;color:var(--amber);margin:14px 0 2px;text-transform:uppercase}
+.chap{display:grid;grid-template-columns:1fr repeat(3,44px);gap:6px;align-items:center;padding:6px 0;border-bottom:1px dashed #1a2440;font-size:13px}
+.chap .hd{color:var(--muted);font-size:9px;letter-spacing:.12em;text-align:center}
+.chap .c{text-align:center}
+.grid60{display:grid;grid-template-columns:repeat(10,minmax(0,1fr));gap:6px;margin-top:6px}
+.day{aspect-ratio:1;border-radius:8px;border:1px solid var(--line);background:#0a1020;font-size:11px;display:grid;place-items:center;color:var(--muted);cursor:pointer;font-variant-numeric:tabular-nums;position:relative}
+.day.done{background:linear-gradient(135deg,rgba(34,211,238,.4),rgba(167,139,250,.4));color:#fff;border-color:rgba(34,211,238,.6);box-shadow:0 0 12px rgba(34,211,238,.25)}
+.day.miss{background:rgba(248,113,113,.12);border-color:rgba(248,113,113,.45);color:var(--red)}
+.day.today{outline:2px solid var(--amber);outline-offset:2px}
+.day.sun::after{content:"";position:absolute;bottom:3px;width:4px;height:4px;border-radius:50%;background:var(--pink)}
+.legend{display:flex;gap:12px;font-size:11px;color:var(--muted);flex-wrap:wrap;margin-bottom:6px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:middle}
+.pill{display:inline-block;padding:4px 10px;border-radius:99px;font-size:12px;font-weight:600;margin-top:8px}
+.ok{background:rgba(52,211,153,.12);color:var(--green);border:1px solid rgba(52,211,153,.4)}
+.warn{background:rgba(251,191,36,.12);color:var(--amber);border:1px solid rgba(251,191,36,.4)}
+.bad{background:rgba(248,113,113,.12);color:var(--red);border:1px solid rgba(248,113,113,.4)}
+.chartbox{position:relative;height:200px}
+.pred{font-size:14px;line-height:1.7}
+.kpi{display:flex;gap:16px;flex-wrap:wrap;margin-top:6px}
+.kpi div{min-width:90px}
+.kpi b{display:block;font-size:20px;font-variant-numeric:tabular-nums}
+.kpi span{font-size:11px;color:var(--muted);letter-spacing:.06em}
+.streak{margin-bottom:12px}
+.streak .top{display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px}
+.streak .bar{margin:0;height:6px}
+/* bottom slider */
+.dock{height:64px;display:flex;align-items:center;justify-content:center;gap:14px;border-top:1px solid var(--line);background:rgba(7,10,18,.85);backdrop-filter:blur(8px)}
+.track{position:relative;display:flex;background:#0b1120;border:1px solid var(--line);border-radius:999px;padding:4px;width:300px}
+.knob{position:absolute;top:4px;bottom:4px;left:4px;width:calc(50% - 4px);border-radius:999px;background:linear-gradient(135deg,var(--cyan),var(--violet));box-shadow:0 0 18px rgba(34,211,238,.35);transition:transform .55s cubic-bezier(.6,.05,.2,1)}
+.opt{position:relative;z-index:1;flex:1;text-align:center;background:none;border:0;color:var(--muted);padding:9px 0;font-size:13px;letter-spacing:.12em;cursor:pointer;font-weight:600}
+.opt.on{color:#05080f}
+.hint{font-size:11px;color:var(--muted);position:absolute;right:18px}
+@media (max-width:1100px){
+  html,body{overflow:auto}
+  .app{height:auto;min-height:100vh;padding-bottom:80px}
+  .deck{overflow:visible}
+  .slides{display:block;transform:none!important}
+  .slide{display:flex;flex-direction:column;height:auto;padding:0}
+  .slide:not(.on){display:none}
+  .col{overflow:visible}
+  .dock{position:fixed;bottom:0;left:0;right:0}
+  .hint{display:none}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div>
+      <h1>60 Day Protocol</h1>
+      <div class="sub" id="meta"></div>
+    </div>
+  </header>
+
+  <div class="deck" id="deck">
+    <div class="slides" id="slides">
+
+      <!-- ===== JEE SLIDE ===== -->
+      <section class="slide on" data-s="jee">
+        <div class="col">
+          <div class="card">
+            <h2>Mission</h2>
+            <div class="stat"><span class="big" id="jDay">--</span><span class="muted" id="jDayOf"></span></div>
+            <div class="muted" id="jDate"></div>
+            <div class="bar"><i id="jTimeBar"></i></div>
+            <div class="muted" id="jTimeLeft"></div>
+          </div>
+          <div class="card a">
+            <h2>Attendance</h2>
+            <div class="stat"><span class="big" id="jAtt">0%</span><span class="muted" id="jAttCount"></span></div>
+            <div class="bar"><i id="jAttBar"></i></div>
+            <div id="jAttPill"></div>
+          </div>
+          <div class="card v">
+            <h2>Prediction</h2>
+            <div class="pred" id="jPred"></div>
+          </div>
+          <div class="card">
+            <h2>Today's Protocol</h2>
+            <div class="muted" id="jToday" style="margin-bottom:4px"></div>
+            <div id="jHabits"></div>
+            <div class="row"><label style="flex:1">Padhai ke ghante (aaj)</label><input type="number" id="jHours" min="0" max="24" step="0.5" placeholder="0"></div>
+            <div class="sec-t">Sunday Mock</div>
+            <div id="jSun"></div>
+          </div>
+        </div>
+
+        <div class="col">
+          <div class="card wide-chart">
+            <h2>Study Hours · last 60 days</h2>
+            <div class="chartbox" style="height:220px"><canvas id="cJHours"></canvas></div>
+          </div>
+          <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px">
+            <div class="card">
+              <h2>Attendance Curve</h2>
+              <div class="chartbox"><canvas id="cJAtt"></canvas></div>
+            </div>
+            <div class="card">
+              <h2>Subject Coverage</h2>
+              <div class="chartbox"><canvas id="cJSub"></canvas></div>
+            </div>
+            <div class="card">
+              <h2>Checkpoint Radar</h2>
+              <div class="chartbox"><canvas id="cJRadar"></canvas></div>
+            </div>
+            <div class="card">
+              <h2>60 Day Grid</h2>
+              <div class="legend">
+                <span><i class="dot" style="background:rgba(34,211,238,.5)"></i>Done</span>
+                <span><i class="dot" style="background:rgba(248,113,113,.4)"></i>Missed</span>
+                <span><i class="dot" style="border:2px solid var(--amber)"></i>Today</span>
+              </div>
+              <div class="grid60" id="jGrid"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="col">
+          <div class="card g">
+            <h2>Chapter Progress</h2>
+            <div class="muted" style="margin-bottom:6px">Theory · Formula · PYQ (10 yrs)</div>
+            <div id="jChapters"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== NDA SLIDE ===== -->
+      <section class="slide" data-s="nda">
+        <div class="col">
+          <div class="card p">
+            <h2>NDA Mission</h2>
+            <div class="stat"><span class="big" id="nDay">--</span><span class="muted" id="nDayOf"></span></div>
+            <div class="muted" id="nDate"></div>
+            <div class="bar"><i id="nTimeBar"></i></div>
+          </div>
+          <div class="card a">
+            <h2>NDA Attendance</h2>
+            <div class="stat"><span class="big" id="nAtt">0%</span><span class="muted" id="nAttCount"></span></div>
+            <div class="bar"><i id="nAttBar"></i></div>
+            <div id="nAttPill"></div>
+          </div>
+          <div class="card v">
+            <h2>NDA Prediction</h2>
+            <div class="pred" id="nPred"></div>
+          </div>
+          <div class="card">
+            <h2>Officer Track · Today</h2>
+            <div class="muted" id="nToday" style="margin-bottom:4px"></div>
+            <div id="nHabits"></div>
+            <div class="row"><label style="flex:1">NDA prep ke ghante (aaj)</label><input type="number" id="nHours" min="0" max="24" step="0.5" placeholder="0"></div>
+          </div>
+        </div>
+
+        <div class="col">
+          <div class="card g">
+            <h2>NDA Hours · last 60 days</h2>
+            <div class="chartbox" style="height:260px"><canvas id="cNHours"></canvas></div>
+          </div>
+          <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px">
+            <div class="card">
+              <h2>NDA Attendance Curve</h2>
+              <div class="chartbox"><canvas id="cNAtt"></canvas></div>
+            </div>
+            <div class="card">
+              <h2>Officer Track Radar</h2>
+              <div class="chartbox"><canvas id="cNRadar"></canvas></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="col">
+          <div class="card">
+            <h2>Habit Consistency</h2>
+            <div id="nStreaks"></div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<nav class="dock">
+  <div class="track" id="track">
+    <div class="knob" id="knob"></div>
+    <button class="opt on" data-s="jee">JEE</button>
+    <button class="opt" data-s="nda">NDA</button>
+  </div>
+  <span class="hint">← → se bhi switch karein</span>
+</nav>
+
+<script>
+(function(){
+  const START = new Date(2026, 9, 29);
+  const DAYS = 60;
+  const KEY = "protocol60.v2";
+  const TARGET_H = 13;
+
+  const J_HABITS = [
+    {id:"wake",t:"Wake up at 4 AM"},
+    {id:"run",t:"Run + exercise"},
+    {id:"med",t:"Morning meditation"},
+    {id:"scr",t:"Screen time under 1 hr"},
+    {id:"nophone",t:"No phone while eating"},
+    {id:"study13",t:"Study 13 hrs"},
+    {id:"revise",t:"Daily revision"},
+    {id:"noregret",t:"No regret"}
+  ];
+  const J_CORE = J_HABITS.map(h=>h.id);
+  const N_HABITS = [
+    {id:"srt",t:"SRT practice"},
+    {id:"wat",t:"WAT practice"},
+    {id:"oq",t:"Officer-like quality practice"},
+    {id:"news",t:"Newspaper reading (4 topics)"},
+    {id:"run",t:"Run + exercise"},
+    {id:"noregret",t:"No regret"},
+    {id:"eng",t:"English speaking practice"}
+  ];
+  const N_CORE = N_HABITS.map(h=>h.id);
+
+  const CHAPTERS = {
+    Physics: ["Units & Measurement","Kinematics","Laws of Motion","Work Power Energy","Rotational Motion","Gravitation","Properties of Matter","Thermodynamics","Kinetic Theory","Oscillations","Waves","Electrostatics","Current Electricity","Magnetism & EMI","Alternating Current","EM Waves","Ray Optics","Wave Optics","Dual Nature","Atoms & Nuclei","Semiconductors"],
+    Chemistry: ["Basic Concepts (Mole)","Atomic Structure","Chemical Bonding","States of Matter","Thermodynamics (Chem)","Equilibrium","Redox Reactions","Hydrogen","s-Block","p-Block 13-14","Organic Basics (GOC)","Hydrocarbons","Solutions","Electrochemistry","Chemical Kinetics","d & f Block","Coordination Compounds","Haloalkanes & Haloarenes","Alcohols Phenols Ethers","Aldehydes Ketones","Amines","Biomolecules"],
+    Maths: ["Sets & Relations","Complex Numbers","Quadratic Equations","Sequences & Series","Permutation & Combination","Binomial Theorem","Trigonometry","Coordinate Geometry","Limits & Continuity","Differentiation","Applications of Derivatives","Integration","Differential Equations","Vectors & 3D","Probability","Matrices & Determinants"]
+  };
+  const SUBJECTS = Object.keys(CHAPTERS);
+  const TOTAL_CH = SUBJECTS.reduce((a,s)=>a+CHAPTERS[s].length,0);
+
+  let state={days:{},chap:{}};
+  try{ const s=JSON.parse(localStorage.getItem(KEY)); if(s) state=s; }catch(e){}
+  if(!state.days) state.days={};
+  if(!state.chap) state.chap={};
+  function save(){ try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){} }
+
+  const C={cyan:"#22d3ee",violet:"#a78bfa",amber:"#fbbf24",green:"#34d399",red:"#f87171",pink:"#f472b6"};
+  const GRIDC="rgba(120,140,180,.12)", TXT="#8593b0";
+
+  function ymd(d){ return d.getFullYear()+"-"+(d.getMonth()+1)+"-"+d.getDate(); }
+  function dayDate(i){ const d=new Date(START); d.setDate(START.getDate()+i); return d; }
+  function isSun(i){ return dayDate(i).getDay()===0; }
+  function todayIdx(){
+    const n=new Date(); const a=new Date(n.getFullYear(),n.getMonth(),n.getDate());
+    const s=new Date(START.getFullYear(),START.getMonth(),START.getDate());
+    return Math.floor((a-s)/86400000);
+  }
+  function dd(i){ const k=ymd(dayDate(i)); if(!state.days[k]) state.days[k]={j:{},n:{},jh:0,nh:0,mock:false}; const o=state.days[k]; o.j=o.j||{}; o.n=o.n||{}; return o; }
+  function peek(i){ return state.days[ymd(dayDate(i))]||{j:{},n:{},jh:0,nh:0,mock:false}; }
+  function jDone(i){ const o=peek(i); return J_CORE.every(id=>o.j[id]) && (!isSun(i)||!!o.mock); }
+  function nDone(i){ const o=peek(i); return N_CORE.every(id=>o.n[id]); }
+
+  // ---------- Charts ----------
+  const charts={};
+  function baseOpts(extra){
+    return Object.assign({responsive:true,maintainAspectRatio:false,animation:{duration:600},
+      plugins:{legend:{labels:{color:TXT,boxWidth:10,font:{size:11}}},tooltip:{backgroundColor:"#0b1120",borderColor:"#18223a",borderWidth:1,titleColor:"#e6edf7",bodyColor:"#c9d4ea",padding:10}},
+      scales:{x:{ticks:{color:TXT,font:{size:10},maxRotation:0,autoSkip:true},grid:{color:GRIDC}},y:{ticks:{color:TXT,font:{size:10}},grid:{color:GRIDC},beginAtZero:true}}
+    }, extra||{});
+  }
+  function attOpts(){ return baseOpts({scales:{x:{ticks:{color:TXT,font:{size:10},maxTicksLimit:8},grid:{color:GRIDC}},y:{min:0,max:100,ticks:{color:TXT,callback:v=>v+"%"},grid:{color:GRIDC}}}}); }
+  function radarOpts(labelsize){ return {responsive:true,maintainAspectRatio:false,scales:{r:{min:0,max:100,ticks:{display:false},grid:{color:GRIDC},angleLines:{color:GRIDC},pointLabels:{color:TXT,font:{size:labelsize||11}}}},plugins:{legend:{display:false}}}; }
+  function grad(ctx,a,b){
+    const {chart}=ctx; const {ctx:c,chartArea}=chart; if(!chartArea) return a;
+    const g=c.createLinearGradient(0,chartArea.bottom,0,chartArea.top); g.addColorStop(0,a); g.addColorStop(1,b); return g;
+  }
+  function mk(id,cfg){ const el=document.getElementById(id); if(!el||typeof Chart==="undefined") return; charts[id]=new Chart(el,cfg); }
+  const LABELS=Array.from({length:DAYS},(_,i)=>String(i+1));
+
+  function initCharts(){
+    mk("cJHours",{type:"bar",data:{labels:LABELS,datasets:[
+      {label:"Ghante",data:[],backgroundColor:ctx=>grad(ctx,"#22d3ee","#a78bfa"),borderRadius:6,borderSkipped:false},
+      {label:"Target 13h",type:"line",data:[],borderColor:C.amber,borderDash:[6,6],pointRadius:0,borderWidth:2,fill:false}
+    ]},options:baseOpts()});
+    mk("cJAtt",{type:"line",data:{labels:LABELS,datasets:[{label:"%",data:[],borderColor:C.cyan,backgroundColor:"rgba(34,211,238,.12)",fill:true,tension:.35,pointRadius:0,borderWidth:2.5}]},options:attOpts()});
+    mk("cJSub",{type:"bar",data:{labels:SUBJECTS,datasets:[
+      {label:"Done",data:[],backgroundColor:[C.cyan,C.violet,C.pink],borderRadius:8},
+      {label:"Baaki",data:[],backgroundColor:"rgba(120,140,180,.18)",borderRadius:8}
+    ]},options:baseOpts({indexAxis:"y",scales:{x:{stacked:true,ticks:{color:TXT},grid:{color:GRIDC}},y:{stacked:true,ticks:{color:TXT},grid:{display:false}}}})});
+    mk("cJRadar",{type:"radar",data:{labels:["Theory","Formula","PYQ"],datasets:[{label:"Progress",data:[0,0,0],borderColor:C.violet,backgroundColor:"rgba(167,139,250,.22)",pointBackgroundColor:C.pink,borderWidth:2}]},options:radarOpts()});
+    mk("cNHours",{type:"bar",data:{labels:LABELS,datasets:[{label:"Ghante",data:[],backgroundColor:ctx=>grad(ctx,"#34d399","#22d3ee"),borderRadius:6,borderSkipped:false}]},options:baseOpts()});
+    mk("cNAtt",{type:"line",data:{labels:LABELS,datasets:[{label:"%",data:[],borderColor:C.green,backgroundColor:"rgba(52,211,153,.12)",fill:true,tension:.35,pointRadius:0,borderWidth:2.5}]},options:attOpts()});
+    mk("cNRadar",{type:"radar",data:{labels:["SRT","WAT","Officer","News","Run","No regret","English"],datasets:[{label:"Consistency",data:[],borderColor:C.green,backgroundColor:"rgba(52,211,153,.22)",pointBackgroundColor:C.cyan,borderWidth:2}]},options:radarOpts(10)});
+  }
+
+  // ---------- Stats ----------
+  function stats(fn,ti){
+    const passed=Math.max(0,Math.min(ti+1,DAYS)); let done=0;
+    for(let i=0;i<passed;i++) if(fn(i)) done++;
+    return {passed,done,pct:passed?Math.round(done/passed*100):0};
+  }
+  function chapCounts(){
+    const out={}; const tot={t:0,f:0,p:0,all:0};
+    SUBJECTS.forEach(s=>{ out[s]={done:0,total:CHAPTERS[s].length};
+      CHAPTERS[s].forEach((c,idx)=>{ const v=state.chap[s+"|"+idx]||{};
+        if(v.t) tot.t++; if(v.f) tot.f++; if(v.p) tot.p++;
+        if(v.t&&v.f&&v.p){ out[s].done++; tot.all++; }
+      });
+    });
+    return {out,tot};
+  }
+  function attPill(pct,passed){
+    if(passed===0) return '<span class="pill warn">Abhi shuru nahi hua</span>';
+    if(pct>=90) return '<span class="pill ok">Consistency mazboot</span>';
+    if(pct>=70) return '<span class="pill warn">Thoda dhyan do</span>';
+    return '<span class="pill bad">Khatarnak zone</span>';
+  }
+  function predHTML(s,ti,chapDone,label){
+    const remaining=Math.max(DAYS-Math.max(ti+1,0),0);
+    const missed=s.passed-s.done; const pace=TOTAL_CH/DAYS;
+    const lost=missed*pace;
+    const proj=Math.min(TOTAL_CH,chapDone+(s.passed?(s.done/s.passed)*pace*remaining:0));
+    let h='<div class="kpi"><div><b>'+s.done+'</b><span>Done din</span></div><div><b>'+missed+'</b><span>Missed din</span></div><div><b>'+Math.round(proj)+'</b><span>Projected ch.</span></div></div>';
+    h+='<div style="margin-top:10px">Har missed din lagbhag <b style="color:#f87171">'+lost.toFixed(1)+'</b> chapter-units ka nuksan.</div>';
+    h+='<div style="margin-top:4px" class="muted">'+(label||"")+'</div>';
+    h+= missed>3?'<div class="pill bad">Ek din bhi miss karna = plan tootna shuru</div>':(missed>0?'<div class="pill warn">Har missed din compounding karta hai</div>':'<div class="pill ok">Perfect streak</div>');
+    return h;
+  }
+
+  // ---------- Render ----------
+  function render(){
+    const ti=todayIdx(); const cur=Math.min(Math.max(ti,0),DAYS-1);
+    const started=ti>=0, ended=ti>=DAYS;
+    document.getElementById("meta").textContent="29 Oct 2026 → "+dayDate(DAYS-1).toDateString();
+    const timePct=Math.min(Math.max((ti+1)/DAYS,0),1)*100;
+    ["j","n"].forEach(p=>{
+      document.getElementById(p+"Day").textContent = started?(ended?DAYS:ti+1):0;
+      document.getElementById(p+"DayOf").textContent=" / "+DAYS;
+      document.getElementById(p+"Date").textContent = started?"Aaj: "+dayDate(cur).toDateString():"Shuru hone mein "+(-ti)+" din";
+      document.getElementById(p+"TimeBar").style.width=timePct+"%";
+    });
+    document.getElementById("jTimeLeft").textContent = ended?"Protocol khatam":"Baaki: "+Math.max(DAYS-(ti+1),0)+" din";
+
+    const js=stats(jDone,ti); const cc=chapCounts();
+    document.getElementById("jAtt").textContent=js.pct+"%";
+    document.getElementById("jAttCount").textContent=js.done+" / "+js.passed+" din";
+    document.getElementById("jAttBar").style.width=js.pct+"%";
+    document.getElementById("jAttPill").innerHTML=attPill(js.pct,js.passed);
+    document.getElementById("jPred").innerHTML=predHTML(js,ti,cc.tot.all,"Chapters fully done: "+cc.tot.all+" / "+TOTAL_CH);
+    document.getElementById("jToday").textContent=dayDate(cur).toDateString();
+    renderJHabits(cur); renderJChapters();
+
+    const ns=stats(nDone,ti);
+    document.getElementById("nAtt").textContent=ns.pct+"%";
+    document.getElementById("nAttCount").textContent=ns.done+" / "+ns.passed+" din";
+    document.getElementById("nAttBar").style.width=ns.pct+"%";
+    document.getElementById("nAttPill").innerHTML=attPill(ns.pct,ns.passed);
+    document.getElementById("nPred").innerHTML=predHTML(ns,ti,0,"Officer track ki consistency = NDA selection ki taiyari");
+    document.getElementById("nToday").textContent=dayDate(cur).toDateString();
+    renderNHabits(cur); renderNStreaks(ti);
+
+    renderGrid(ti); renderCharts(ti,cc);
+  }
+
+  function renderJHabits(i){
+    const o=dd(i);
+    document.getElementById("jHabits").innerHTML=J_HABITS.map(h=>'<div class="row"><input type="checkbox" data-j="'+h.id+'"'+(o.j[h.id]?' checked':'')+'><label>'+h.t+'</label></div>').join("");
+    document.getElementById("jHours").value=o.jh||"";
+    const sun=isSun(i);
+    document.getElementById("jSun").innerHTML = sun
+      ? '<div class="row"><input type="checkbox" data-mock="1"'+(o.mock?' checked':'')+'><label>Full JEE mock test</label></div>'
+      : '<div class="muted">Mock sirf Sunday ko hota hai</div>';
+    document.querySelectorAll("[data-j]").forEach(cb=>cb.onchange=()=>{ dd(i).j[cb.dataset.j]=cb.checked; save(); render(); });
+    const mk=document.querySelector("[data-mock]"); if(mk) mk.onchange=()=>{ dd(i).mock=mk.checked; save(); render(); };
+    document.getElementById("jHours").onchange=e=>{ dd(i).jh=parseFloat(e.target.value)||0; save(); render(); };
+  }
+  function renderNHabits(i){
+    const o=dd(i);
+    document.getElementById("nHabits").innerHTML=N_HABITS.map(h=>'<div class="row"><input type="checkbox" data-n="'+h.id+'"'+(o.n[h.id]?' checked':'')+'><label>'+h.t+'</label></div>').join("");
+    document.getElementById("nHours").value=o.nh||"";
+    document.querySelectorAll("[data-n]").forEach(cb=>cb.onchange=()=>{ dd(i).n[cb.dataset.n]=cb.checked; save(); render(); });
+    document.getElementById("nHours").onchange=e=>{ dd(i).nh=parseFloat(e.target.value)||0; save(); render(); };
+  }
+  function renderNStreaks(ti){
+    const passed=Math.max(1,Math.min(ti+1,DAYS));
+    document.getElementById("nStreaks").innerHTML=N_HABITS.map(h=>{
+      let n=0; for(let i=0;i<passed;i++) if(peek(i).n[h.id]) n++;
+      const p=Math.round(n/passed*100);
+      return '<div class="streak"><div class="top"><span>'+h.t+'</span><span class="muted">'+p+'%</span></div><div class="bar"><i style="width:'+p+'%"></i></div></div>';
+    }).join("");
+  }
+
+  function renderJChapters(){
+    let h='';
+    SUBJECTS.forEach(s=>{
+      h+='<div class="sec-t">'+s+'</div><div class="chap"><div class="hd">CHAPTER</div><div class="hd">THEORY</div><div class="hd">FORMULA</div><div class="hd">PYQ</div></div>';
+      CHAPTERS[s].forEach((c,idx)=>{
+        const k=s+"|"+idx; const v=state.chap[k]||{};
+        h+='<div class="chap"><div>'+c+'</div>'+['t','f','p'].map(x=>'<div class="c"><input type="checkbox" data-c="'+k+'" data-x="'+x+'"'+(v[x]?' checked':'')+'></div>').join("")+'</div>';
+      });
+    });
+    const wrap=document.getElementById("jChapters"); wrap.innerHTML=h;
+    wrap.querySelectorAll("[data-c]").forEach(cb=>cb.onchange=()=>{
+      const k=cb.dataset.c; state.chap[k]=state.chap[k]||{}; state.chap[k][cb.dataset.x]=cb.checked; save(); render();
+    });
+  }
+
+  function renderGrid(ti){
+    const g=document.getElementById("jGrid"); let h='';
+    for(let i=0;i<DAYS;i++){
+      const c=['day']; if(i===ti) c.push('today'); if(i<=ti) c.push(jDone(i)?'done':'miss'); if(isSun(i)) c.push('sun');
+      h+='<div class="'+c.join(' ')+'" data-i="'+i+'" title="'+dayDate(i).toDateString()+'">'+(i+1)+'</div>';
+    }
+    g.innerHTML=h;
+    g.querySelectorAll(".day").forEach(d=>d.onclick=()=>{
+      const i=+d.dataset.i; const o=dd(i); const on=jDone(i);
+      J_CORE.forEach(id=>o.j[id]=!on); if(isSun(i)) o.mock=!on; save(); render();
+    });
+  }
+
+  function renderCharts(ti,cc){
+    const past=i=>i<=ti;
+    const hJ=Array.from({length:DAYS},(_,i)=>past(i)?(peek(i).jh||0):null);
+    const hN=Array.from({length:DAYS},(_,i)=>past(i)?(peek(i).nh||0):null);
+    const aJ=[],aN=[]; let cj=0,cn=0;
+    for(let i=0;i<DAYS;i++){
+      if(past(i)){ if(jDone(i)) cj++; if(nDone(i)) cn++; aJ.push(Math.round(cj/(i+1)*100)); aN.push(Math.round(cn/(i+1)*100)); }
+      else { aJ.push(null); aN.push(null); }
+    }
+    const target=LABELS.map(()=>TARGET_H);
+    if(charts.cJHours){ charts.cJHours.data.datasets[0].data=hJ; charts.cJHours.data.datasets[1].data=target; charts.cJHours.update(); }
+    if(charts.cJAtt){ charts.cJAtt.data.datasets[0].data=aJ; charts.cJAtt.update(); }
+    if(charts.cJSub){
+      charts.cJSub.data.datasets[0].data=SUBJECTS.map(s=>cc.out[s].done);
+      charts.cJSub.data.datasets[1].data=SUBJECTS.map(s=>cc.out[s].total-cc.out[s].done);
+      charts.cJSub.update();
+    }
+    if(charts.cJRadar){ const pc=n=>Math.round(n/TOTAL_CH*100); charts.cJRadar.data.datasets[0].data=[pc(cc.tot.t),pc(cc.tot.f),pc(cc.tot.p)]; charts.cJRadar.update(); }
+    if(charts.cNHours){ charts.cNHours.data.datasets[0].data=hN; charts.cNHours.update(); }
+    if(charts.cNAtt){ charts.cNAtt.data.datasets[0].data=aN; charts.cNAtt.update(); }
+    if(charts.cNRadar){
+      const passed=Math.max(1,Math.min(ti+1,DAYS));
+      charts.cNRadar.data.datasets[0].data=N_HABITS.map(h=>{ let n=0; for(let i=0;i<passed;i++) if(peek(i).n[h.id]) n++; return Math.round(n/passed*100); });
+      charts.cNRadar.update();
+    }
+  }
+
+  // ---------- Slider ----------
+  const slides=document.getElementById("slides");
+  const knob=document.getElementById("knob");
+  const opts=[...document.querySelectorAll(".opt")];
+  let cur=0;
+  function goTo(idx){
+    cur=idx;
+    const isMobile=window.matchMedia("(max-width:1100px)").matches;
+    if(!isMobile) slides.style.transform="translateX("+(-idx*100)+"%)";
+    knob.style.transform="translateX("+(idx*100)+"%)";
+    opts.forEach((o,i)=>o.classList.toggle("on",i===idx));
+    document.querySelectorAll(".slide").forEach((s,i)=>s.classList.toggle("on",i===idx));
+    setTimeout(()=>Object.values(charts).forEach(c=>c&&c.resize()),60);
+  }
+  opts.forEach((o,i)=>o.onclick=()=>goTo(i));
+  document.addEventListener("keydown",e=>{
+    if(e.key==="ArrowRight") goTo(Math.min(cur+1,opts.length-1));
+    if(e.key==="ArrowLeft") goTo(Math.max(cur-1,0));
+  });
+  let tx=null;
+  document.getElementById("deck").addEventListener("touchstart",e=>{tx=e.touches[0].clientX;},{passive:true});
+  document.getElementById("deck").addEventListener("touchend",e=>{
+    if(tx===null) return; const dx=e.changedTouches[0].clientX-tx; tx=null;
+    if(Math.abs(dx)>50){ goTo(dx<0?Math.min(cur+1,opts.length-1):Math.max(cur-1,0)); }
+  },{passive:true});
+
+  initCharts();
+  render();
+  goTo(0);
+  setInterval(render,60000);
+})();
+</script>
+</body>
+</html>
